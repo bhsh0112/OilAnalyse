@@ -1,0 +1,14 @@
+.env
+*-api.txt
+qwen-api.txt
+deepseek-api.txt
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.DS_Store
+
+/data
+/outputs
+/tests
