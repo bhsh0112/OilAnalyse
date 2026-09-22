@@ -41,9 +41,8 @@ STEEP_DROP_L = 20.0
 STEEP_DROP_SIGMA_MULT = 5.0
 STEEP_DROP_RECOVER_S = 5 * 60
 
-# AD 交叉验证：尖峰判定
+# AD 交叉验证：上升段内任一采样 ≥ 该值即记为尖峰（不用相对中位数，避免持续故障抬高中位）
 AD_SPIKE_ABS = 1500.0
-AD_SPIKE_ABOVE_MEDIAN = 800.0
 AD_DECREASE_MIN = 20.0
 
 # 加油间隔段油耗：里程必须大于该值才计算百公里油耗

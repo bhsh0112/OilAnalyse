@@ -10,7 +10,6 @@ import pandas as pd
 
 from .config import (
     AD_DECREASE_MIN,
-    AD_SPIKE_ABOVE_MEDIAN,
     AD_SPIKE_ABS,
     FULL_TANK_L,
     STEEP_DROP_L,
@@ -26,8 +25,10 @@ from .stations import station_band
 def score_refuel_events(df: pd.DataFrame, events: list[RefuelEvent]) -> list[RefuelEvent]:
     """用 AD 通道与事件形态给加油事件分层。
 
-    真加油常见：油量平滑上升且 ADValue 同步下降。
-    假事件常见：单点跳变、AD 尖峰、加油量接近噪声。
+    真加油常见：油量平滑上升且上升段内 ADValue 同步下降。
+    假事件常见：单点跳变、上升段内 AD 反向或绝对值尖峰、加油量接近噪声。
+    加油前一条的 AD 尖峰不单独否决：尖峰恢复后的上升段仍可能是真加油。
+    上升段内 AD ≥ 1500 直接记尖峰；持续高 AD 会抬高中位数，故不再用相对中位。
 
     Args:
         df: 轨迹表。
@@ -106,7 +107,7 @@ def apply_spatial_assist(event: RefuelEvent) -> RefuelEvent:
     if band == "near":
         event.reasons.append(f"附近有加油站「{name}」（{dist:.0f} m{src_txt}）")
         if event.confidence == "存疑":
-            event.reasons.append("虽近加油站，但 AD/形态不支持，不上调")
+            event.reasons.append("虽近加油站，但形态/AD 不支持，不上调")
         return event
 
     if band == "mid":
@@ -262,7 +263,11 @@ def confidence_counts(events: list[RefuelEvent]) -> dict[str, Any]:
 
 
 def _ad_features(df: pd.DataFrame, event: RefuelEvent) -> dict[str, Any]:
-    """提取一次加油窗口的 AD 特征。"""
+    """提取加油上升段内的 AD 特征。
+
+    尖峰与同向/反向只在 ``start_idx``～``end_idx`` 上判断。
+    ``start_idx-1`` 若为尖峰，只写入说明，不单独把事件打成存疑。
+    """
     reasons: list[str] = []
     if "ADValue" not in df.columns:
         return {
@@ -273,7 +278,7 @@ def _ad_features(df: pd.DataFrame, event: RefuelEvent) -> dict[str, Any]:
             "ad_spike": False,
             "reasons": reasons,
         }
-    i0 = max(0, int(event.start_idx) - 1)
+    i0 = int(event.start_idx)
     i1 = int(event.end_idx)
     ads = df["ADValue"].iloc[i0 : i1 + 1].astype(float)
     ad_start = float(ads.iloc[0])
@@ -281,14 +286,21 @@ def _ad_features(df: pd.DataFrame, event: RefuelEvent) -> dict[str, Any]:
     ad_delta = ad_end - ad_start
     median = float(ads.median())
     ad_max = float(ads.max())
-    ad_spike = ad_max >= AD_SPIKE_ABS and (ad_max - median) >= AD_SPIKE_ABOVE_MEDIAN
+    # 持续故障会把窗口中位数一起抬高，不能再用「相对中位」挡住尖峰。
+    ad_spike = ad_max >= AD_SPIKE_ABS
     ad_ok = (ad_delta <= -AD_DECREASE_MIN) and (not ad_spike)
+    if i0 > 0:
+        pre_ad = float(df["ADValue"].iloc[i0 - 1])
+        if pre_ad >= AD_SPIKE_ABS:
+            reasons.append(
+                f"加油前一条 AD={pre_ad:.0f} 曾出尖峰，上升段起点已回到 {ad_start:.0f}，不单独否决"
+            )
     if ad_spike:
-        reasons.append(f"AD 尖峰 {ad_max:.0f}（中位 {median:.0f}）")
+        reasons.append(f"上升段内 AD 尖峰 {ad_max:.0f}（阈值 {AD_SPIKE_ABS:.0f}，窗口中位 {median:.0f}）")
     if ad_delta <= -AD_DECREASE_MIN:
-        reasons.append(f"AD {ad_start:.0f}→{ad_end:.0f}，与加油同向")
+        reasons.append(f"上升段 AD {ad_start:.0f}→{ad_end:.0f}，与加油同向")
     elif ad_delta >= AD_DECREASE_MIN:
-        reasons.append(f"AD {ad_start:.0f}→{ad_end:.0f}，与油量上升反向")
+        reasons.append(f"上升段 AD {ad_start:.0f}→{ad_end:.0f}，与油量上升反向")
     return {
         "ad_ok": ad_ok,
         "ad_start": ad_start,

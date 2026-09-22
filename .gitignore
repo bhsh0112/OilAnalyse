@@ -1,19 +1,30 @@
+# 密钥与本地环境（禁止入库）
 .env
+.venv/
+venv/
+api/*.txt
 *-api.txt
 qwen-api.txt
 deepseek-api.txt
-.venv/
-venv/
+gaode-api.txt
+
+# Python / 测试缓存
 __pycache__/
 *.pyc
 .pytest_cache/
 .DS_Store
 
-/data
-/outputs
-/tests
+# 原始轨迹（体积大，本地放入 data/）
+/data/
+
+# 运行产物默认不入库
+outputs/*
+!outputs/report.md
+
+# 汇报 / PPT 制作（讨论稿、配图脚本、幻灯提纲，不入库）
 ppt/
-src/fuel_mgmt/amap_viz.py
+**/slides.md
+**/slides_figures/
+**/*汇报*.md
 src/fuel_mgmt/make_slides.py
 src/fuel_mgmt/slides_viz.py
-src/fuel_mgmt/stations.py

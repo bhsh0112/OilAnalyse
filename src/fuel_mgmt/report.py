@@ -165,7 +165,7 @@ def render_report(
     parts.append(
         "可信度：高可信 {} 次 / {:.1f} L，较可信 {} 次 / {:.1f} L，存疑 {} 次 / {:.1f} L。"
         "管理核算以「高可信+较可信」为准；存疑事件只列入核查。"
-        "仅高可信样本过少时，不宜单独做油量平衡。".format(
+        "仅高可信的平衡耗油可作为对照，不单独作为题设口径。".format(
             (conf.get("高可信") or {}).get("n", 0),
             (conf.get("高可信") or {}).get("volume_l", 0),
             (conf.get("较可信") or {}).get("n", 0),
@@ -301,7 +301,7 @@ def _render_advice(advice: str | None) -> str:
     """第 5 章正文：成功 / 未配置 Key / 调用失败。"""
     if advice is None:
         return (
-            "未生成。未检测到 `DEEPSEEK_API_KEY` 或作业根目录的 `deepseek-api.txt`。"
+            "未生成。未检测到 `DEEPSEEK_API_KEY` 或 `api/deepseek-api.txt`。"
             "配置 DeepSeek 密钥后重新运行流水线即可写入本章。"
             "前四章统计结果不受影响。"
         )

@@ -38,17 +38,21 @@ def _project_root() -> Path:
 def load_api_key() -> str:
     """读取 DeepSeek API Key。
 
-    优先环境变量 `DEEPSEEK_API_KEY`，否则读取作业根目录的 `deepseek-api.txt`。
+    优先环境变量 `DEEPSEEK_API_KEY`，否则依次读取
+    `api/deepseek-api.txt`、作业根目录与当前目录的 `deepseek-api.txt`。
     """
     key = os.getenv("DEEPSEEK_API_KEY", "").strip()
     if key:
         return key
-    path = _project_root() / API_KEY_FILENAME
-    if path.exists():
-        return path.read_text(encoding="utf-8-sig").strip()
-    cwd_path = Path.cwd() / API_KEY_FILENAME
-    if cwd_path.exists():
-        return cwd_path.read_text(encoding="utf-8-sig").strip()
+    root = _project_root()
+    for path in (
+        root / "api" / API_KEY_FILENAME,
+        root / API_KEY_FILENAME,
+        Path.cwd() / "api" / API_KEY_FILENAME,
+        Path.cwd() / API_KEY_FILENAME,
+    ):
+        if path.exists():
+            return path.read_text(encoding="utf-8-sig").strip()
     return ""
 
 
