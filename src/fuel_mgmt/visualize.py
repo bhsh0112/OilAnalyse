@@ -12,6 +12,7 @@ import matplotlib.dates as mdates
 import matplotlib.pyplot as plt
 import pandas as pd
 
+from .amap_viz import write_trajectory_map
 from .config import FULL_TANK_L
 from .refuel import RefuelEvent
 
@@ -66,7 +67,10 @@ def generate_figures(
     plot_sampling_interval(df, paths["sampling_interval"])
     plot_daily_km(daily, paths["daily_km"])
     plot_trajectory(df, events, paths["trajectory"])
-    return {k: f"figures/{p.name}" for k, p in paths.items()}
+    write_trajectory_map(df, events, fig_dir / "trajectory_map.html")
+    rel = {k: f"figures/{p.name}" for k, p in paths.items()}
+    rel["trajectory_map"] = "figures/trajectory_map.html"
+    return rel
 
 
 def plot_oil_timeseries(df: pd.DataFrame, out: Path) -> None:

@@ -46,6 +46,17 @@ DEEPSEEK_MODEL=deepseek-chat
 
 未配置 Key 时，报告第 5 章会注明「未生成」，前四章不受影响。
 
+## 高德周边加油站（可选，空间旁证）
+
+把作业根目录的 Key 放到 `api/gaode-api.txt`（已 gitignore），或设置环境变量 `GAODE_API_KEY`。
+需要**Web 服务**类型的 Key；若是 JS 端 Key，高德会返回 `USERKEY_PLAT_NOMATCH`，流水线自动回退 OpenStreetMap Nominatim。
+
+空间距离只写入旁证，不否决 AD 分层。跳过检索：
+
+```text
+python -m src.fuel_mgmt.pipeline --data "data/2-油耗检测作业-吉A8K65011月1日-10日数据.xls" --out outputs --skip-poi
+```
+
 ## 测试
 
 ```text

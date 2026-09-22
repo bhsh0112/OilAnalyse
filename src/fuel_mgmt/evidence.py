@@ -1,4 +1,4 @@
-"""加油可信度、AD 交叉验证、慢加油漏检与短时陡降。"""
+"""加油可信度、AD 交叉验证与短时陡降。"""
 
 from __future__ import annotations
 
@@ -12,16 +12,15 @@ from .config import (
     AD_DECREASE_MIN,
     AD_SPIKE_ABOVE_MEDIAN,
     AD_SPIKE_ABS,
-    FULL_MARK_L,
     FULL_TANK_L,
-    SLOW_REFUEL_RESIDUAL_L,
     STEEP_DROP_L,
     STEEP_DROP_RECOVER_S,
     STEEP_DROP_SIGMA_MULT,
     STEEP_DROP_WINDOW_S,
     STOP_SPEED_KMH,
 )
-from .refuel import RefuelEvent, refuel_volume_threshold
+from .refuel import RefuelEvent
+from .stations import station_band
 
 
 def score_refuel_events(df: pd.DataFrame, events: list[RefuelEvent]) -> list[RefuelEvent]:
@@ -50,8 +49,6 @@ def score_refuel_events(df: pd.DataFrame, events: list[RefuelEvent]) -> list[Ref
             reasons.append("加油量低于 50 L，接近噪声或顶油")
         if n_samples <= 1:
             reasons.append("仅 1 个上升采样点")
-        if event.source == "slow_stop":
-            reasons.append("来自长停车净上升回补，非快速加油簇")
 
         if ad_spike or n_samples <= 1 or volume < 50:
             confidence = "存疑"
@@ -70,99 +67,63 @@ def score_refuel_events(df: pd.DataFrame, events: list[RefuelEvent]) -> list[Ref
             confidence = "存疑"
 
         event.confidence = confidence
+        event.confidence_ad = confidence
         event.ad_ok = ad_ok
         event.ad_start = ad["ad_start"]
         event.ad_end = ad["ad_end"]
         event.ad_delta = ad["ad_delta"]
         event.ad_spike = ad_spike
         event.reasons = reasons
+        apply_spatial_assist(event)
         scored.append(event)
     return scored
 
 
-def detect_slow_refuels(
-    df: pd.DataFrame,
-    events: list[RefuelEvent],
-    stops: list[dict[str, Any]],
-    sigma: float,
-) -> list[RefuelEvent]:
-    """在长停车中回补「慢加油」：净上升不能被已有事件解释。
+def apply_spatial_assist(event: RefuelEvent) -> RefuelEvent:
+    """用最近加油站距离微调说明，原则上不改判 AD 结论。
 
-    Args:
-        df: 轨迹表。
-        events: 已识别的快速加油簇。
-        stops: `long_stops` 输出（需含 start_idx/end_idx）。
-        sigma: 停车噪声标准差。
-
-    Returns:
-        新增的慢加油事件（source=slow_stop）。
+    规则：
+    - AD 尖峰或 AD 反向的「存疑」即使贴着加油站也不上调。
+    - 「高可信」即使检索不到站也不下调（高速服务区 POI 缺失、现势地图与 2014 年不一致）。
+    - 仅当「较可信」且 AD 本就不支持、同时半径内无站时，才下调为存疑（弱证据的平局打破）。
     """
-    min_vol = max(SLOW_REFUEL_RESIDUAL_L, refuel_volume_threshold(sigma))
-    extra: list[RefuelEvent] = []
-    for stop in stops:
-        if "start_idx" not in stop:
-            continue
-        i0 = int(stop["start_idx"])
-        i1 = int(stop["end_idx"])
-        t0 = pd.Timestamp(stop["t0_ts"])
-        t1 = pd.Timestamp(stop["t1_ts"])
-        explained = 0.0
-        for event in events:
-            es, ee = pd.Timestamp(event.start_time), pd.Timestamp(event.end_time)
-            if es <= t1 and ee >= t0:
-                explained += float(event.volume_l)
-        residual = float(stop["oil_end"]) - float(stop["oil_start"]) - explained
-        if residual < min_vol:
-            continue
+    if not event.station_band and event.station_distance_m is None and not event.station_query_status:
+        return event
+    band = event.station_band or station_band(event.station_distance_m)
+    event.station_band = band
+    if not band:
+        return event
 
-        oil_seg = df["oilValue"].iloc[i0 : i1 + 1]
-        imin = int(oil_seg.idxmin())
-        imax = int(oil_seg.idxmax())
-        if imax <= imin:
-            continue
-        oil_start = float(df.at[imin, "oilValue"])
-        oil_end = float(df.at[imax, "oilValue"])
-        volume = oil_end - oil_start
-        if volume < min_vol:
-            continue
+    name = event.station_name or "加油站"
+    dist = event.station_distance_m
+    src = event.station_source or ""
+    src_txt = f"，{src}" if src else ""
 
-        ad_start = float(df.at[imin, "ADValue"]) if "ADValue" in df.columns else None
-        ad_end = float(df.at[imax, "ADValue"]) if "ADValue" in df.columns else None
-        if ad_start is not None and ad_end is not None and ad_end > ad_start - AD_DECREASE_MIN:
-            # 油量升但 AD 不降，更像漂移
-            continue
+    if band == "error":
+        event.reasons.append("周边加油站检索失败，空间证据缺省")
+        return event
 
-        extra.append(
-            RefuelEvent(
-                start_time=pd.Timestamp(df.at[imin, "GPSTime"]).to_pydatetime(),
-                end_time=pd.Timestamp(df.at[imax, "GPSTime"]).to_pydatetime(),
-                lat=float(df.at[imin, "GPSlat"]),
-                lng=float(df.at[imin, "GPSlng"]),
-                oil_start=oil_start,
-                oil_end=oil_end,
-                volume_l=volume,
-                is_full=oil_end >= FULL_MARK_L,
-                n_samples=int(imax - imin + 1),
-                start_idx=imin,
-                end_idx=imax,
-                source="slow_stop",
-            )
+    if band == "near":
+        event.reasons.append(f"附近有加油站「{name}」（{dist:.0f} m{src_txt}）")
+        if event.confidence == "存疑":
+            event.reasons.append("虽近加油站，但 AD/形态不支持，不上调")
+        return event
+
+    if band == "mid":
+        event.reasons.append(f"周边加油站「{name}」（{dist:.0f} m{src_txt}），距离中等，仅作弱旁证")
+        return event
+
+    if dist is not None:
+        event.reasons.append(
+            f"最近加油站「{name}」约 {dist:.0f} m{src_txt}，超出近距阈值（空间不支持，不作否决）"
         )
-    return extra
+    else:
+        event.reasons.append("检索半径内未找到加油站（空间不支持，不作否决）")
 
-
-def merge_refuel_events(
-    fast: list[RefuelEvent],
-    slow: list[RefuelEvent],
-) -> list[RefuelEvent]:
-    """合并快/慢加油，去掉与已有事件时间重叠的慢加油。"""
-    merged = list(fast)
-    for event in slow:
-        if _overlaps_any(event, merged):
-            continue
-        merged.append(event)
-    merged.sort(key=lambda e: e.start_time)
-    return merged
+    if event.confidence == "较可信" and event.ad_ok is not True:
+        event.confidence = "存疑"
+        event.reasons.append("AD 证据不足且附近无加油站，下调为存疑")
+    return event
 
 
 def detect_steep_drops(
@@ -358,11 +319,6 @@ def _recovers_soon(df: pd.DataFrame, i1: int, target: float) -> bool:
             return True
         j += 1
     return False
-
-
-def _overlaps_any(event: RefuelEvent, others: list[RefuelEvent]) -> bool:
-    """事件是否与列表中任一事件时间相交。"""
-    return _overlaps_any_times(event.start_time, event.end_time, others)
 
 
 def _overlaps_any_times(t0: datetime, t1: datetime, events: list[RefuelEvent]) -> bool:

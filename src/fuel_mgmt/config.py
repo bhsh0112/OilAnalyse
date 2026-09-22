@@ -46,9 +46,6 @@ AD_SPIKE_ABS = 1500.0
 AD_SPIKE_ABOVE_MEDIAN = 800.0
 AD_DECREASE_MIN = 20.0
 
-# 慢加油：长停车内不能被已有事件解释的净上升
-SLOW_REFUEL_RESIDUAL_L = 25.0
-
 # 加油间隔段油耗：里程必须大于该值才计算百公里油耗
 MIN_SEGMENT_KM = 50.0
 
@@ -59,3 +56,18 @@ MILEAGE_UNIT_KM = 0.1
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 DEFAULT_DEEPSEEK_MODEL = "deepseek-chat"
 API_KEY_FILENAME = "deepseek-api.txt"
+
+# 高德 / 周边加油站（空间旁证，不作否决）
+GAODE_KEY_FILENAME = "gaode-api.txt"
+GAODE_AROUND_URL = "https://restapi.amap.com/v3/place/around"
+GAODE_KEYWORDS = "加油站"
+GAODE_TYPES = "010100|010101|010102|010103"
+STATION_SEARCH_RADIUS_M = 5000
+STATION_NEAR_M = 800
+STATION_MID_M = 2000
+OSM_OVERPASS_URLS = (
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.kumi.systems/api/interpreter",
+)
+OSM_NOMINATIM_URL = "https://nominatim.openstreetmap.org/search"
+OSM_USER_AGENT = "fuel-mgmt-homework/1.0 (course assignment)"

@@ -26,7 +26,7 @@ def build_summary(
     steep_drops: list[dict[str, Any]] | None = None,
     timing: dict[str, Any] | None = None,
     confidence: dict[str, Any] | None = None,
-    n_slow: int = 0,
+    spatial: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """组装 analysis_summary.json 的内容。"""
     return {
@@ -57,8 +57,8 @@ def build_summary(
             "consumption_naive_neg_sum_l": consumption.get("consumption_naive_neg_sum_l"),
             "oil_first": consumption.get("oil_first"),
             "oil_last": consumption.get("oil_last"),
-            "n_slow_refuel": n_slow,
             "confidence": confidence or {},
+            "spatial": spatial or {},
             "high_confidence_consumption": consumption_high or {},
             "usable_consumption": consumption_usable or {},
             "events": [e.to_dict() for e in events],

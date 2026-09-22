@@ -12,3 +12,8 @@ __pycache__/
 /data
 /outputs
 /tests
+ppt/
+src/fuel_mgmt/amap_viz.py
+src/fuel_mgmt/make_slides.py
+src/fuel_mgmt/slides_viz.py
+src/fuel_mgmt/stations.py

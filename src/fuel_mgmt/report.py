@@ -144,8 +144,10 @@ def render_report(
     parts.append("")
     parts.append(
         "检测规则：速度 ≤ 5 km/h、位置位移小、油量连续上升；间隔小于 3 分钟的上升合并为一次。"
-        "单次加油量阈值 = max(25 L, 4σ) = **{:.1f} L**。随后用 `ADValue` 交叉验证并分层；"
-        "长停车中不能被已有事件解释的净上升记为慢加油。".format(threshold_l)
+        "单次加油量阈值 = max(25 L, 4σ) = **{:.1f} L**。"
+        "随后用 `ADValue` 交叉验证并分层。"
+        "再用周边加油站距离作为**旁证**（不否决 AD 结论）。"
+        "干线货车以加油站短时快加为主，不另设慢加油模型。".format(threshold_l)
     )
     parts.append("")
     conf = hw.get("confidence") or {}
@@ -158,7 +160,6 @@ def render_report(
     parts.append("| 耗油量（平衡，L） | {} | {} |".format(hw.get("consumption_balanced_l"), usable.get("consumption_balanced_l", "")))
     parts.append("| 对照：负向差分求和 (L) | {} | — |".format(hw.get("consumption_naive_neg_sum_l")))
     parts.append("| 期初 / 期末油量 (L) | {} / {} | 同左 |".format(hw.get("oil_first"), hw.get("oil_last")))
-    parts.append("| 其中慢加油回补 | {} | — |".format(hw.get("n_slow_refuel", 0)))
     parts.append("| 仅高可信次数 / 加油量 | {} 次 / {} L | — |".format(high.get("n_refuel", 0), high.get("total_refuel_l", "")))
     parts.append("")
     parts.append(
@@ -182,6 +183,7 @@ def render_report(
     parts.append("")
     parts.append(_events_table(events))
     parts.append("")
+    parts.append(_spatial_section(hw.get("spatial") or {}, events))
 
     parts.append("## 4. 运营与油耗管理挖掘")
     parts.append("")
@@ -193,7 +195,15 @@ def render_report(
     parts.append("")
     parts.append("### 4.2 轨迹与加油地点")
     parts.append("")
-    parts.append("下图为 GPS 散点（颜色表示当时油量）与加油点。第一版不叠底图。")
+    parts.append(
+        "轨迹叠在高德底图上（浏览器打开 [`{}`]({})）。"
+        "折线为抽稀后的 GPS 轨迹，散点颜色表示当时油量，圆点为加油候选（绿/橙/红 = 高可信/较可信/存疑）。"
+        "国内终端坐标按 GCJ-02 直接投到高德；GPS/北斗约 1.3 km 系统偏差未做平移。"
+        "下面保留无底图散点，便于对照。".format(
+            figures.get("trajectory_map", "figures/trajectory_map.html"),
+            figures.get("trajectory_map", "figures/trajectory_map.html"),
+        )
+    )
     parts.append("")
     parts.append("![]({})".format(figures["trajectory"]))
     parts.append("")
@@ -270,7 +280,9 @@ def render_report(
     parts.append("- 读数顶死在 320 L 时，加满油量可能被低估。")
     parts.append("- 瞬时百公里油耗被噪声主导，本报告不将其作为主结论。")
     parts.append("- 数据为单车约 9 天，不能推广为司机画像或下周需求预测。")
-    parts.append("- GPS/北斗有约 1.3 km 系统偏差，加油地点未做地图匹配。")
+    parts.append("- GPS/北斗有约 1.3 km 系统偏差；周边检索同时使用两套坐标，取较小距离。")
+    parts.append("- 高德 Web 服务 Key 若平台不匹配会回退 OSM Nominatim；现势 POI 对照 2014 年轨迹只能作旁证。")
+    parts.append("- 干线货车按加油站短时快加建模，不另设慢加油；长停车净上升用已识别加油解释。")
     parts.append("")
     parts.append("---")
     parts.append("")
@@ -328,7 +340,6 @@ def _events_table(events: list[RefuelEvent]) -> str:
         ad = ""
         if e.ad_start is not None and e.ad_end is not None:
             ad = "{:.0f}→{:.0f}".format(e.ad_start, e.ad_end)
-        src = "慢加" if e.source == "slow_stop" else "快加"
         rows.append(
             [
                 i,
@@ -341,13 +352,79 @@ def _events_table(events: list[RefuelEvent]) -> str:
                 "是" if e.is_full else "否",
                 e.confidence or "",
                 ad,
-                src,
+                _station_cell(e),
             ]
         )
     return _md_table(
-        ["序号", "开始时间", "结束", "位置", "油量前", "油量后", "加油量 L", "加满", "可信度", "AD", "来源"],
+        ["序号", "开始时间", "结束", "位置", "油量前", "油量后", "加油量 L", "加满", "可信度", "AD", "最近加油站"],
         rows,
     )
+
+
+def _station_cell(event: RefuelEvent) -> str:
+    """事件表中的加油站单元格。"""
+    if event.station_band == "error":
+        return "检索失败"
+    if event.station_distance_m is None:
+        return "未找到"
+    name = event.station_name or "加油站"
+    if len(name) > 16:
+        name = name[:16] + "…"
+    return "{} / {:.0f} m".format(name, event.station_distance_m)
+
+
+def _spatial_section(spatial: dict[str, Any], events: list[RefuelEvent]) -> str:
+    """第 3.2 节：周边加油站旁证与改判效果。"""
+    if not spatial and not any(e.station_band for e in events):
+        return ""
+    lines = ["### 3.2 周边加油站（空间旁证）", ""]
+    lines.append(
+        "对 12 个加油候选点检索周边加油站。高德地点周边搜索为第一选择；"
+        "若 Key 为 JS 端平台（`USERKEY_PLAT_NOMATCH`）则回退 OpenStreetMap Nominatim。"
+        "同时用 GPS 与北斗坐标检索，距离取较小值，以吸收约 1.3 km 系统偏差。"
+        "**空间只作旁证**：不因近站把 AD 尖峰上调为可信，也不因无站否决高可信加油。"
+        "现势 POI 对照 2014 年轨迹，只能印证、不能单独定罪。"
+    )
+    lines.append("")
+    provider = spatial.get("provider") or ""
+    status = spatial.get("query_status") or ""
+    if provider or status:
+        lines.append("实际检索来源：`{}`；状态：`{}`。".format(provider or "—", status or "—"))
+        lines.append("")
+    bands = spatial.get("bands") or {}
+    lines.append(
+        "距离分层（近 ≤ {:.0f} m / 中 {:.0f}–{:.0f} m / 远 {:.0f}–{:.0f} m）："
+        "近 {} 次，中 {} 次，远 {} 次，未找到 {} 次，检索失败 {} 次。"
+        "其中「高可信+较可信」且近距印证 {} 次。"
+        "因空间证据改判可信度 {} 次。".format(
+            spatial.get("near_m") or 800,
+            spatial.get("near_m") or 800,
+            spatial.get("mid_m") or 2000,
+            spatial.get("mid_m") or 2000,
+            spatial.get("search_radius_m") or 5000,
+            bands.get("near", 0),
+            bands.get("mid", 0),
+            bands.get("far", 0),
+            bands.get("none", 0),
+            bands.get("error", 0),
+            spatial.get("usable_near_n", 0),
+            spatial.get("n_confidence_changed", 0),
+        )
+    )
+    lines.append("")
+    if spatial.get("changed"):
+        lines.append("改判明细：")
+        lines.append("")
+        rows = [
+            [c.get("time"), c.get("from"), c.get("to"), c.get("station"), c.get("distance_m")]
+            for c in spatial["changed"]
+        ]
+        lines.append(_md_table(["时间", "改前", "改后", "加油站", "距离 m"], rows))
+        lines.append("")
+    else:
+        lines.append("本批 12 个事件的可信度分层与加入空间旁证前一致，空间证据没有推翻 AD 结论。")
+        lines.append("")
+    return "\n".join(lines)
 
 
 def _daily_table(daily: list[dict[str, Any]]) -> str:

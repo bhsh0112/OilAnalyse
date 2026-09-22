@@ -43,6 +43,12 @@ class RefuelEvent:
     ad_delta: float | None = None
     ad_spike: bool = False
     reasons: list[str] = field(default_factory=list)
+    confidence_ad: str = ""
+    station_name: str | None = None
+    station_distance_m: float | None = None
+    station_band: str = ""
+    station_source: str = ""
+    station_query_status: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         """转为可 JSON 序列化的字典。"""
@@ -57,6 +63,8 @@ class RefuelEvent:
         for key in ("ad_start", "ad_end", "ad_delta"):
             if d[key] is not None:
                 d[key] = round(float(d[key]), 1)
+        if d["station_distance_m"] is not None:
+            d["station_distance_m"] = round(float(d["station_distance_m"]), 1)
         return d
 
 
